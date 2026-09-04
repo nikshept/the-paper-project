@@ -1,18 +1,18 @@
 """
-Score -- reads marked answers off an already-dewarped photo, using
-whichever template the researcher confirmed in the "Get Template" tab.
+Score -- reads marked answers off an already-dewarped photo.
 
-The actual technique (binarized ink-diff against a blank reference) is
-p1's own detect.py, unmodified in substance -- only the item/option
-source changed: p1 read from a hardcoded ITEMS_PAGE0 list against a
-hand-built boxes.json; this reads from a QuestionGuess's option_elements
-(auto-guessed, researcher-confirmed), which are just bboxes in PDF-point
-space, same coordinate system p1's boxes.json used. The scoring math
-itself -- adaptive-threshold binarization first (so a photographed page
-under real lighting compares fairly against a pixel-perfect blank
-render, rather than reading as uniformly "darker" everywhere), then
-diffing ink-pixel counts per option -- is exactly p1's, including the
-calibrated thresholds.
+LOGIC: for each detected option (a circle/checkbox region), count "ink"
+pixels inside its box on the photo, and subtract the ink count at the
+SAME box on a pixel-perfect blank render. A genuinely blank option
+scores ~0 (whatever ink is there is in both images, so it cancels).
+A real mark scores high (present in the photo, absent in the blank).
+The highest-scoring option is the answer, UNLESS the numbers look
+ambiguous (see CONFIG below) -- in which case it's flagged for a human
+to check instead of guessed.
+
+Everything a person would plausibly want to tune while debugging is a
+named constant in the CONFIG block right below. Nothing else in this
+file needs editing for normal tuning.
 """
 from __future__ import annotations
 
@@ -24,27 +24,90 @@ import pymupdf
 
 from core.dewarp import SCALE
 
-# Same thresholds p1 calibrated against real photos (see p1's detect.py):
-# genuinely blank items showed top scores of -34 to -10 (noise), genuinely
-# marked items showed 30-180+. Starting point, not a large validated set.
-MIN_INK_THRESHOLD = 15
-MIN_CONFIDENCE_GAP = 15
+
+# ============================================================ CONFIG ===
+# Every knob below is read only from this block -- change a number here,
+# nothing else, restart the app, and re-score.
+
+# --- Binarization (turns the photo/blank into pure black-ink-or-white,
+#     BEFORE any box is even applied) -----------------------------------
+BINARIZE_BLOCK_SIZE = 41   # Size (px) of the local neighborhood used to
+                            # decide "ink or not" at each pixel. MUST be
+                            # odd. Bigger = better at detecting a big
+                            # solid mark fully (small blockSize can make
+                            # the CENTER of a solid mark disappear, since
+                            # its own local neighborhood is already dark).
+                            # Too big = starts blending together lighting
+                            # differences that are genuinely local (e.g.
+                            # a shadow on one side of the page).
+                            # Try: 25 (tighter) to 75 (looser).
+BINARIZE_C = 10             # How much darker than local average a pixel
+                            # must be to count as ink. Higher = stricter
+                            # (fewer false positives from faint shadows,
+                            # but a very light pencil mark may not clear
+                            # the bar). Lower = more sensitive, more
+                            # noise. Try: 5 (sensitive) to 30 (strict).
+
+# --- Box position/size (where exactly ink gets counted) ----------------
+BOX_MARGIN_PX = 0          # Shrinks or grows the sampled box from the
+                            # detected circle's own edges, in pixels.
+                            # POSITIVE = expand outward (risk: catches
+                            # nearby table borders/dividers as false ink).
+                            # NEGATIVE = shrink inward/inset (risk: over-
+                            # weights whatever's at the box's own center,
+                            # e.g. a printed digit inside the circle).
+                            # 0 = exactly the detected box, no adjustment.
+                            # This was expand(+4) -> inset(-15%) -> exact(0)
+                            # across earlier tuning; exact was safest so far.
+BOX_OFFSET_X_PX = 0        # Shifts EVERY sampled box sideways, in pixels.
+BOX_OFFSET_Y_PX = 0        # Shifts EVERY sampled box up(-)/down(+), in
+                            # pixels. Use this if the debug report/overlay
+                            # shows boxes consistently off-center in one
+                            # direction (a real, confirmed issue on some
+                            # photos -- likely dewarp precision, not
+                            # something margin/binarization can fix).
+                            # Independent of BOX_MARGIN_PX -- offset moves
+                            # the box, margin resizes it; use both together
+                            # if needed.
+
+# --- Decision thresholds (how the numbers above get turned into an
+#     answer, or a flag for human review) -------------------------------
+MIN_INK_THRESHOLD = 15     # An option's score must clear this to count
+                            # as "marked at all". Below it on EVERY option
+                            # -> no_mark_detected. Raise = stricter (more
+                            # things read as blank). Lower = more
+                            # sensitive to faint marks, but more noise-
+                            # triggered false positives.
+MIN_CONFIDENCE_GAP = 15    # The top-scoring option must beat the runner-
+                            # up by at least this much, or it's flagged
+                            # low_confidence. Raise = more flags. Lower =
+                            # fewer flags, more risk of accepting a
+                            # genuinely ambiguous mark.
+MULTI_MARK_RATIO = 0.6     # An option only needs to reach this fraction
+                            # of the TOP score to also count as "marked",
+                            # triggering multiple_marks_detected if 2+
+                            # options clear it. Raise toward 0.8-0.9 =
+                            # much less trigger-happy on this flag (only
+                            # near-equal marks count as "multiple").
+                            # Lower = more sensitive to genuine double-
+                            # marks, but more prone to flagging noise as
+                            # a second mark.
+# =========================================================================
 
 
 def _binarize(gray):
-    """Adaptive threshold: locally-normalized binarization, robust to
-    the lighting/shadow variation a real photo has and a digital render
-    doesn't. Identical to p1's detect.py."""
+    """Local (not global) threshold -- see BINARIZE_* above. Local
+    matters because a real photo's lighting isn't even across the page;
+    a single global cutoff would misread a shadowed blank area as ink."""
     return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                  cv2.THRESH_BINARY_INV, blockSize=41, C=10)
+                                  cv2.THRESH_BINARY_INV,
+                                  blockSize=BINARIZE_BLOCK_SIZE, C=BINARIZE_C)
 
 
 def build_blank_references(blank_pdf_bytes: bytes) -> dict:
-    """Renders every page of the blank reference at the SAME pixel
-    scale (SCALE, from dewarp.py) the dewarped photos already use, so a
-    template bbox in PDF points maps to the same pixel location in
-    both, no separate alignment step needed. Returns {page_num:
-    binarized_image}."""
+    """Renders + binarizes the blank reference once, at the SAME pixel
+    scale dewarped photos use, so a bbox in PDF points maps to the same
+    pixel location in both -- no separate alignment step needed."""
     doc = pymupdf.open(stream=blank_pdf_bytes, filetype="pdf")
     refs = {}
     for pno, page in enumerate(doc):
@@ -62,41 +125,19 @@ def binarize_dewarped(dewarped_bgr) -> "np.ndarray":
 
 
 def _bbox_to_px(bbox_pts: list) -> tuple:
+    """PDF points -> pixels, THEN apply BOX_MARGIN_PX/BOX_OFFSET_*. This
+    is the one place all three position/size knobs actually take effect."""
     x0, y0, x1, y1 = bbox_pts
-    return int(x0 * SCALE), int(y0 * SCALE), int(x1 * SCALE), int(y1 * SCALE)
+    x0, y0, x1, y1 = x0 * SCALE, y0 * SCALE, x1 * SCALE, y1 * SCALE
+    x0 = x0 - BOX_MARGIN_PX + BOX_OFFSET_X_PX
+    x1 = x1 + BOX_MARGIN_PX + BOX_OFFSET_X_PX
+    y0 = y0 - BOX_MARGIN_PX + BOX_OFFSET_Y_PX
+    y1 = y1 + BOX_MARGIN_PX + BOX_OFFSET_Y_PX
+    return int(x0), int(y0), int(x1), int(y1)
 
 
 def _ink_score(bin_img, bbox_px: tuple) -> float:
-    """Samples ink from EXACTLY the detected box -- no expansion, no
-    inset. Went through two other approaches first, both wrong in
-    opposite directions, and it's worth recording why neither worked:
-
-    1. Originally expanded by 4px outward. Caused phantom high scores
-       on genuinely empty circles: bboxes near a table border/column
-       divider (most often the leftmost option in a Likert row) picked
-       up the printed divider line itself as false "ink" whenever a
-       photo's dewarp was even slightly misaligned there.
-
-    2. Tried insetting 15% toward the center instead, to avoid #1.
-       Made things WORSE in practice on the real survey (confirmed:
-       flagged count nearly doubled, 53->92, with raw scores showing
-       uniformly elevated noise across every option on real photos).
-       p1's actual bubble style prints a digit INSIDE each circle
-       (see dewarp.py); insetting toward the center concentrates
-       sampling on exactly that digit, and any dewarp misalignment in
-       the digit's own printed edges becomes a much larger fraction of
-       a smaller sampled region than it was of the full circle -- worse
-       for every option uniformly, not just ones near a border.
-
-    The exact bbox avoids both failure modes: never reaches past the
-    circle into border content, and never over-concentrates on the
-    digit at the circle's center. Confirmed only partially in
-    synthetic testing (a controlled test didn't cleanly reproduce the
-    digit-noise regression -- likely because it used larger, more
-    spaced-out circles than the real survey's denser layout) -- this
-    change is trusting the real observed regression on the actual
-    survey over an inconclusive synthetic result, not a fully proven
-    root cause. Worth re-checking against real flagged counts again."""
+    """Counts ink pixels in exactly the box _bbox_to_px produced."""
     x0, y0, x1, y1 = bbox_px
     h, w = bin_img.shape[:2]
     crop = bin_img[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
@@ -106,53 +147,83 @@ def _ink_score(bin_img, bbox_px: tuple) -> float:
 
 
 def score_question(dewarped_bin, blank_bin, option_elements: list) -> dict:
-    """option_elements: the QuestionGuess's confirmed option bboxes (PDF
-    points). Returns a dict: answer_index (0-based, or None), confidence_gap,
-    flagged (bool), reason, raw_diffs -- same shape/logic as p1's
-    score_item, just driven by generic bboxes instead of a hardcoded
-    item's option list.
+    """Scores one question. Returns answer_index (0-based, or None),
+    confidence_gap, flagged, reason, and raw_diffs/raw_dewarped/
+    raw_blank (per-option numbers, for debugging -- see the CSV report).
 
-    Checks, in order (identical to p1):
-    1. Nothing clears the ink threshold at all -> no_mark_detected
-    2. More than one option clears it -> multiple_marks_detected
-    3. Top pick isn't clearly ahead of the runner-up -> low_confidence
+    Order of checks:
+    1. Nothing clears MIN_INK_THRESHOLD -> no_mark_detected
+    2. 2+ options clear MULTI_MARK_RATIO of the top -> multiple_marks_detected
+    3. Top isn't ahead of runner-up by MIN_CONFIDENCE_GAP -> low_confidence
     4. Otherwise: confident single answer"""
-    diffs = []
+    raw_dewarped, raw_blank, diffs = [], [], []
+    bboxes_px = []
     for el in option_elements:
         bbox_px = _bbox_to_px(el["bbox"])
-        d = _ink_score(dewarped_bin, bbox_px) - _ink_score(blank_bin, bbox_px)
-        diffs.append(d)
+        bboxes_px.append(bbox_px)
+        dw = _ink_score(dewarped_bin, bbox_px)
+        bl = _ink_score(blank_bin, bbox_px)
+        raw_dewarped.append(dw)
+        raw_blank.append(bl)
+        diffs.append(dw - bl)
 
     if not diffs:
         return {"answer_index": None, "confidence_gap": 0, "flagged": True,
-                "reason": "no_options_in_template", "raw_diffs": diffs}
+                "reason": "no_options_in_template", "raw_diffs": diffs,
+                "raw_dewarped": raw_dewarped, "raw_blank": raw_blank, "bboxes_px": bboxes_px}
 
     ranked = sorted(diffs, reverse=True)
     top = ranked[0]
     gap = (ranked[0] - ranked[1]) if len(ranked) > 1 else top
-    n_marked = sum(1 for d in diffs if d >= MIN_INK_THRESHOLD and d >= 0.6 * top)
+    n_marked = sum(1 for d in diffs if d >= MIN_INK_THRESHOLD and d >= MULTI_MARK_RATIO * top)
+
+    result = {"raw_diffs": diffs, "raw_dewarped": raw_dewarped, "raw_blank": raw_blank,
+              "bboxes_px": bboxes_px, "confidence_gap": gap}
 
     if top < MIN_INK_THRESHOLD:
-        return {"answer_index": None, "confidence_gap": gap, "flagged": True,
-                "reason": "no_mark_detected", "raw_diffs": diffs}
+        result.update(answer_index=None, flagged=True, reason="no_mark_detected")
+    elif n_marked >= 2:
+        result.update(answer_index=int(np.argmax(diffs)), flagged=True, reason="multiple_marks_detected")
+    else:
+        answer_index = int(np.argmax(diffs))
+        flagged = gap < MIN_CONFIDENCE_GAP
+        result.update(answer_index=answer_index, flagged=flagged,
+                      reason="low_confidence" if flagged else None)
+    return result
 
-    if n_marked >= 2:
-        return {"answer_index": int(np.argmax(diffs)), "confidence_gap": gap, "flagged": True,
-                "reason": "multiple_marks_detected", "raw_diffs": diffs}
 
-    answer_index = int(np.argmax(diffs))
-    flagged = gap < MIN_CONFIDENCE_GAP
-    return {"answer_index": answer_index, "confidence_gap": gap, "flagged": flagged,
-            "reason": "low_confidence" if flagged else None, "raw_diffs": diffs}
+def score_response(dewarped_images: dict, blank_refs: dict, confirmed_template: list) -> dict:
+    """One respondent. Returns {question_index: score_dict_or_None} --
+    None for a page not available for this respondent, or an open-text
+    question (needs manual transcription, not ink-diff)."""
+    results = {}
+    for i, g in enumerate(confirmed_template):
+        if g["page"] not in dewarped_images:
+            results[i] = None
+            continue
+        option_elements = g["option_elements"]
+        # Falls back to the old implicit heuristic if question_type is missing
+        # (a template saved before that field existed).
+        q_type = g.get("question_type") or ("open_text" if len(option_elements) == 1 else "mcq")
+        if q_type == "open_text":
+            results[i] = None
+            continue
+        dewarped_bin = binarize_dewarped(dewarped_images[g["page"]])
+        blank_bin = blank_refs.get(g["page"])
+        if blank_bin is None:
+            results[i] = None
+            continue
+        results[i] = score_question(dewarped_bin, blank_bin, option_elements)
+    return results
 
+
+# ============================================================ EXPORTS ==
 
 def build_export_xlsx(scored_responses: dict, confirmed_template: list, corrections: dict) -> bytes:
-    """scored_responses: {tracking_code: {q_index: score_dict_or_None}}.
-    corrections: {(tracking_code, q_index): corrected_value} -- value is
-    a 1-based option number, "NA", "MULT", or a transcribed string for
-    an open-text question. Colors match p1's own review_app.py
-    convention: yellow = flagged/unreviewed, green = corrected/reviewed
-    in-app."""
+    """The researcher-facing spreadsheet. One row per respondent, one
+    column per question. Yellow = flagged/unreviewed, green = corrected
+    in-app. Each cell's comment shows why it was flagged, for a quick
+    check without needing the full debug report below."""
     import openpyxl
     from openpyxl.styles import PatternFill, Font
     from openpyxl.comments import Comment
@@ -180,11 +251,6 @@ def build_export_xlsx(scored_responses: dict, confirmed_template: list, correcti
             correction = corrections.get((code, qi))
             cell = ws.cell(row=row_idx, column=qi + 2)
 
-            # Comment shows WHY, for debugging -- the reason + raw ink-diff
-            # scores per option, same numbers the in-app review card shows.
-            # Kept even on corrected cells (as "was: ...") so a corrected
-            # answer's original detection is still auditable afterward,
-            # not silently overwritten with no trace.
             comment_lines = []
             if score is not None:
                 diffs_str = ", ".join(f"{d:.0f}" for d in score.get("raw_diffs", []))
@@ -199,7 +265,7 @@ def build_export_xlsx(scored_responses: dict, confirmed_template: list, correcti
                 cell.value = correction
                 cell.fill = REVIEWED_FILL
                 if comment_lines:
-                    comment_lines.insert(0, f"Corrected in review (was: auto-detected).")
+                    comment_lines.insert(0, "Corrected in review (was: auto-detected).")
             elif score is None:
                 cell.value = ""
                 cell.fill = FLAG_FILL
@@ -209,7 +275,7 @@ def build_export_xlsx(scored_responses: dict, confirmed_template: list, correcti
                 elif score["reason"] == "multiple_marks_detected":
                     cell.value = "MULT"
                 else:
-                    cell.value = score["answer_index"] + 1  # 1-based, for researcher readability
+                    cell.value = score["answer_index"] + 1
                 if score["flagged"]:
                     cell.fill = FLAG_FILL
 
@@ -221,34 +287,54 @@ def build_export_xlsx(scored_responses: dict, confirmed_template: list, correcti
     return buf.getvalue()
 
 
-def score_response(dewarped_images: dict, blank_refs: dict, confirmed_template: list) -> dict:
-    """dewarped_images: {page_num: dewarped_bgr_image} for ONE respondent
-    (may not have every page, if some of their photos didn't identify).
-    confirmed_template: list of dicts (works whether they came straight
-    from session -- via dataclasses.asdict(QuestionGuess) -- or from an
-    uploaded template JSON; both are plain dicts with the same keys, so
-    there's no separate code path needed for either source).
-    Returns {index: score_dict_or_None} -- None for a page that wasn't
-    available for this respondent, or for a lone-blank (open-text)
-    question, which isn't ink-diff scorable and needs manual
-    transcription instead."""
-    results = {}
-    for i, g in enumerate(confirmed_template):
-        if g["page"] not in dewarped_images:
-            results[i] = None
-            continue
-        option_elements = g["option_elements"]
-        # Falls back to the old implicit heuristic if question_type is missing entirely
-        # (a template saved before this field existed) -- see app.py's identical comment.
-        q_type = g.get("question_type") or ("open_text" if len(option_elements) == 1 else "mcq")
-        is_open_text = q_type == "open_text"
-        if is_open_text:
-            results[i] = None  # needs manual transcription, not ink-diff
-            continue
-        dewarped_bin = binarize_dewarped(dewarped_images[g["page"]])
-        blank_bin = blank_refs.get(g["page"])
-        if blank_bin is None:
-            results[i] = None
-            continue
-        results[i] = score_question(dewarped_bin, blank_bin, option_elements)
-    return results
+def build_debug_report_xlsx(scored_responses: dict, confirmed_template: list) -> bytes:
+    """One row per (respondent, option) -- every individual box scored,
+    not just the winning answer per question. Includes the exact pixel
+    box used, its raw dewarped/blank/diff ink counts, and the CONFIG
+    values active when it was generated (so a downloaded report is
+    self-describing even after you've since changed the numbers).
+    Downloadable any time after scoring, independent of review progress."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    TOP_PICK_FILL = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Debug"
+
+    ws.append(["config: BLOCK_SIZE", BINARIZE_BLOCK_SIZE, "C", BINARIZE_C,
+              "BOX_MARGIN_PX", BOX_MARGIN_PX, "BOX_OFFSET_X_PX", BOX_OFFSET_X_PX,
+              "BOX_OFFSET_Y_PX", BOX_OFFSET_Y_PX, "MIN_INK_THRESHOLD", MIN_INK_THRESHOLD,
+              "MIN_CONFIDENCE_GAP", MIN_CONFIDENCE_GAP, "MULTI_MARK_RATIO", MULTI_MARK_RATIO])
+    ws.append([])
+    ws.append(["tracking_code", "question_index", "label", "page", "option_index",
+              "box_x0_px", "box_y0_px", "box_x1_px", "box_y1_px",
+              "ink_dewarped", "ink_blank", "ink_diff",
+              "is_top_pick", "question_reason", "question_confidence_gap"])
+    for cell in ws[3]:
+        cell.font = Font(bold=True)
+
+    for code in sorted(scored_responses.keys()):
+        for qi, g in enumerate(confirmed_template):
+            score = scored_responses[code].get(qi)
+            if score is None or "bboxes_px" not in score:
+                continue  # open-text or missing page -- no boxes to report
+            top_idx = score.get("answer_index")
+            for oi, bbox_px in enumerate(score["bboxes_px"]):
+                is_top = oi == top_idx
+                ws.append([
+                    code, qi, g.get("label", ""), g.get("page", ""), oi,
+                    bbox_px[0], bbox_px[1], bbox_px[2], bbox_px[3],
+                    f"{score['raw_dewarped'][oi]:.0f}", f"{score['raw_blank'][oi]:.0f}",
+                    f"{score['raw_diffs'][oi]:.0f}",
+                    is_top, score.get("reason") or "confident",
+                    f"{score.get('confidence_gap', 0):.0f}",
+                ])
+                if is_top:
+                    for cell in ws[ws.max_row]:
+                        cell.fill = TOP_PICK_FILL
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

@@ -26,7 +26,7 @@ from core.identify import identify_photos, get_qr_position_hint
 from core.extract import extract
 from core.structure import structure
 from core.template_builder import guess_questions, resolve_guess_text, QuestionGuess
-from core.score import build_blank_references, score_response, build_export_xlsx
+from core.score import build_blank_references, score_response, build_export_xlsx, build_debug_report_xlsx
 
 st.set_page_config(page_title="Paper Survey Tool", layout="wide")
 
@@ -864,9 +864,20 @@ if tab_review_responses:
                 st.success(f"All flagged answers reviewed ({len(corrections)} corrected).")
 
             st.divider()
-            xlsx_bytes = build_export_xlsx(scored, template, corrections)
-            st.download_button("Download Excel", xlsx_bytes, file_name="responses.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                xlsx_bytes = build_export_xlsx(scored, template, corrections)
+                st.download_button("Download Excel", xlsx_bytes, file_name="responses.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with dl_col2:
+                debug_xlsx_bytes = build_debug_report_xlsx(scored, template)
+                st.download_button("Download debug report (Excel)", debug_xlsx_bytes,
+                                   file_name="debug_report.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   help="Every option box scored for every respondent -- exact "
+                                        "pixel box, raw ink counts, and the config values active "
+                                        "when generated. Available any time, doesn't require "
+                                        "finishing review first.")
 
 
 # ============================================================= GENERATE ===
