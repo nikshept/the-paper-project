@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+}
+
+img {
+  user-select: none;
+  display: block;
+}
+
+#container {
+  position: relative;
+  display: inline-block;
+}
+
+#overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
