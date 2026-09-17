@@ -1,4 +1,5 @@
 import json
+import pymupdf
 from PIL import Image
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
@@ -14,10 +15,15 @@ if st.session_state.step == "upload":
     with col1:
         st.write("Step 1: Upload a scanned image of a response sheet.")
     with col2:
-        imgUpload = st.file_uploader("Upload here:", type=["png", "jpg"])
+        fileUpload = st.file_uploader("Upload here:", type=["png", "jpg", "pdf"])
 
-    if imgUpload is not None:
-        st.session_state.template_img = Image.open(imgUpload)
+    if fileUpload is not None:
+        if fileUpload.type == "application/pdf":
+            doc = pymupdf.open(stream=fileUpload.read(), filetype="pdf")
+            pix = doc[0].get_pixmap(dpi=280)
+            st.session_state.template_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        else:
+            st.session_state.template_img = Image.open(fileUpload)
         st.session_state.step = "label"
         st.rerun()
 
