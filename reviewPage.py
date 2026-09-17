@@ -9,6 +9,17 @@ from processPDF import process_pages, build_excel
 
 st.set_page_config(layout="wide")
 
+# Turns selected pills (during review) into green colour, rather than default red
+st.markdown("""
+<style>
+button[data-variant="pills"][data-selected="true"] {
+    background-color: rgba(46, 204, 113, 0.25) !important;
+    color: white !important;
+    border-color: #2ecc71 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Review")
 
 if "step" not in st.session_state:
@@ -17,6 +28,8 @@ if "step" not in st.session_state:
 # -------------------- Helpers --------------------
 
 def get_selected_pages(mode, num_pages, pages_str=""):
+    if mode == "All pages":
+        return list(range(num_pages))
     if mode == "Odd pages":
         return list(range(0, num_pages, 2))
     if mode == "Even pages":
@@ -52,7 +65,7 @@ if st.session_state.step == "upload":
             num_pages = pymupdf.open(stream=pdf_file.read(), filetype="pdf").page_count
             pdf_file.seek(0)
         
-        mode = st.selectbox("Select pages to process", ["Odd pages", "Even pages", "Custom"])
+        mode = st.selectbox("Select pages to process", ["All pages", "Odd pages", "Even pages", "Custom"])
         pages_str = st.text_input("Pages (e.g. 1,3,5-8)") if mode == "Custom" else ""
         selected_pages = get_selected_pages(mode, num_pages, pages_str)
 
