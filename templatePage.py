@@ -67,7 +67,10 @@ elif st.session_state.step == "label":
         with col2:
             box["labels"] = st.text_input(f"Label(s) for box {i+1}", key=f"label_{i}")
         with col3:
-            box["bperRow"] = st.number_input(f"Bubbles per row in Box {i+1}", min_value=1, step=1, key=f"bubbles_{i}")
+            if box["box_type"] == "Response_Box":
+                box["bperRow"] = st.number_input(f"Bubbles per row in Box {i+1}", min_value=1, step=1, key=f"bubbles_{i}")
+            else:
+                box["bperRow"] = None
 
         # Store the question labels separately
         label_list = box["labels"].split(",")  # "q1,q2,q3" -> ["q1", "q2", "q3"]

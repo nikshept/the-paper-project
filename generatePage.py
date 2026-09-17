@@ -10,6 +10,7 @@ import streamlit as st
 
 from overlay import compose_page, preview_page_png, OverlayConfig
 
+st.set_page_config(layout="wide")
 
 def read_codes(codes_file):
     """Parses codes.csv, returns a validated list of codes, or None
