@@ -205,7 +205,13 @@ def get_Responses(image, bperRow, tag="", debug=False):
 			source, row = ("contour", contour_rows[i]) if c is not None else ("hough", hough_rows[i] if h is not None else (None, None))
 			color = (0, 0, 255)
 
-		merged.append((value, gap_ratio, flag, source))
+		if not flag:
+			flagReason = "high confidence" if source == "contour" else "medium confidence"
+		else:
+			flagReason = "low confidence"
+
+		merged.append((value, gap_ratio, flag, source, flagReason))
+
 		if row is None:
 			continue
 

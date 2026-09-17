@@ -64,9 +64,10 @@ if st.session_state.step == "upload":
                 selected_pages=selected_pages,
                 page_dpi=dpi,
             )
-        st.session_state.review_idx = 0
-        st.session_state.step = "review"
-        st.rerun()
+        if st.session_state.all_results:
+            st.session_state.review_idx = 0
+            st.session_state.step = "review"
+            st.rerun()
 
 
 # -------------------- 2. review --------------------

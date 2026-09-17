@@ -40,7 +40,19 @@ def get_QR (croppedboxImage):
 
 ### Process the pages and get results (responses and scored images)
 def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json_path=None, save_to_disk=False, debug=False):
+    # input template and checks whether there is a QR box and some response boxes
     template = json.load(template_file)
+
+    if not any(box["box_type"] == "QR_Box" for box in template):
+        print("No QR box in template")
+        st.error("No QR box found in template. Please check your template.")
+        return []
+    if not any(box["box_type"] == "Response_Box" for box in template):
+        print("No Response box in template")
+        st.error("No Response box found in template. Please check your template.")
+        return []
+
+    # convert pdf into images
     doc = pymupdf.open(stream=pdf_file.read(), filetype="pdf")
     images = fetch_images(doc, selected_pages, page_dpi)
 
@@ -48,6 +60,7 @@ def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json
     st.session_state.all_results_images = {}
     st.session_state.all_cropped_boxes = {}
 
+    # cycle through page images and get answers
     for key, img in images.items():
         boxes = copy.deepcopy(template)
         page_qr_id = ""
@@ -57,7 +70,12 @@ def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json
             if box["box_type"] == "QR_Box":
                 croppedQRimg = img_cropper(img, box)
                 page_qr_id = get_QR(croppedQRimg)
-                print(f"Identified as {page_qr_id}")
+                if page_qr_id != "":
+                    print(f"QR Box found in {key} and identified as {page_qr_id}")
+
+        if page_qr_id == "":
+            print(f"Skipping {key}: QR not identified")
+            continue
 
         for i, box in enumerate(boxes):
             if box["box_type"] == "Response_Box":
@@ -70,13 +88,13 @@ def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json
 
                 results, imgResults = getResponses.get_Responses(croppedResimg, box["bperRow"], tag, debug)
 
-                for label, (value, gap_ratio, flag, source) in zip(box["questionlabels"].keys(), results):
-                    box["questionlabels"][label] = {"value": value, "confidence_ratio": gap_ratio, "flagged": flag, "source": source}
+                for label, (value, gap_ratio, flag, source, flagReason) in zip(box["questionlabels"].keys(), results):
+                    box["questionlabels"][label] = {"value": value, "confidence_ratio": gap_ratio, "flagged": flag, "source": source, "flagReason": flagReason}
 
                 st.session_state.all_results_images[tag] = imgResults
 
                 valsCount = len(results)
-                flagCount = sum(1 for (_, _, flag, _) in results if flag)
+                flagCount = sum(1 for (_, _, flag, _, _) in results if flag)
                 print(f"Box{i}: Received {valsCount} values and {flagCount} were flagged.")
 
         all_results.append({"page": key, "qr_ID": page_qr_id, "boxes": boxes})
