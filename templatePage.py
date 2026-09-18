@@ -1,8 +1,9 @@
-import json
-import pymupdf
+import json, cv2
+import numpy as np
 from PIL import Image
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
+from dewarp import dewarp_image_A4
 
 st.header("Draw Box Templates")
 
@@ -15,15 +16,15 @@ if st.session_state.step == "upload":
     with col1:
         st.write("Step 1: Upload a scanned image of a response sheet.")
     with col2:
-        fileUpload = st.file_uploader("Upload here:", type=["png", "jpg", "pdf"])
+        fileUpload = st.file_uploader("Upload here:", type=["png", "jpg"])
 
     if fileUpload is not None:
-        if fileUpload.type == "application/pdf":
-            doc = pymupdf.open(stream=fileUpload.read(), filetype="pdf")
-            pix = doc[0].get_pixmap(dpi=280)
-            st.session_state.template_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        else:
-            st.session_state.template_img = Image.open(fileUpload)
+        dewarped = dewarp_image_A4(fileUpload)
+        if dewarped is None:
+            st.error("The image quality is not sufficient, please upload a better quality image to continue.")
+            st.stop()
+        rgb = cv2.cvtColor(dewarped, cv2.COLOR_BGR2RGB)
+        st.session_state.template_img = Image.fromarray(rgb)
         st.session_state.step = "label"
         st.rerun()
 
@@ -49,7 +50,7 @@ elif st.session_state.step == "label":
         key="canvas",
     )
 
-    # Store the box boundaries in a template
+    # Store the box boundaries (as ratios) in a template
     boxesTemplate = []
     for obj in canvas_result.json_data["objects"]:
         x1, y1 = obj["left"], obj["top"]
