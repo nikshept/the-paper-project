@@ -17,7 +17,7 @@ def draw_markers(image, corners, rejected):
     return annotated
 
 ### Warps image flat into A4 ratio using 4 marker centers as corners
-def dewarp_image_A4(image, target_w=2000, target_h=None, margin=80, debug=False):
+def dewarp_image_A4(image, target_w=None, target_h=None, margin_pct=0.06, debug=False):
     # Pre process the image input
     file_bytes = np.frombuffer(image.read(), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -33,21 +33,25 @@ def dewarp_image_A4(image, target_w=2000, target_h=None, margin=80, debug=False)
     if ids is None or len(ids) != 4:
         return None
 
-    # Figure out A4 dimensions and corner locations
+    # Figure A4 dimensions and corners
+    if target_w is None:
+        target_w = img.shape[1]
     if target_h is None:
         target_h = int(target_w / (210 / 297))
 
+    margin = int(target_w * margin_pct)  # scales with output size, not a fixed pixel count
+
     centers = np.array([c[0].mean(axis=0) for c in corners])  # one center point per marker
 
-    sums = centers[:, 0] + centers[:, 1]   # x+y: smallest = top-left, largest = bottom-right
-    diffs = centers[:, 0] - centers[:, 1]  # x-y: largest = top-right, smallest = bottom-left
+    sums = centers[:, 0] + centers[:, 1]
+    diffs = centers[:, 0] - centers[:, 1]
 
     top_left = centers[np.argmin(sums)]
     bottom_right = centers[np.argmax(sums)]
     top_right = centers[np.argmax(diffs)]
     bottom_left = centers[np.argmin(diffs)]
 
-    # Dewarp the image and fit it into the corners and dimensions
+    # Dewarp and fit to the dimensions and corners
     src = np.float32([top_left, top_right, bottom_right, bottom_left])
     dst = np.float32([[margin, margin], [target_w - margin, margin],
                        [target_w - margin, target_h - margin], [margin, target_h - margin]])

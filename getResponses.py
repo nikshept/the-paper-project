@@ -124,18 +124,16 @@ def get_Responses_Hough(image, bperRow, tag="", debug=False):
 	blurred = cv2.medianBlur(imgGray, 5)
 
 	h, w = blurred.shape[:2]
-	min_radius, max_radius, min_dist = int(w*20/650), int(w*40/650), int(w*50/650)
+	min_radius, max_radius, min_dist = int(w*10/650), int(w*40/650), int(w*50/650)
 
 	circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=min_dist,
 	                            param1=50, param2=50, minRadius=min_radius, maxRadius=max_radius)
 
-	# None (not an empty array) when nothing is found -- circles[0,:] on
-	# None crashes without this check.
 	if circles is None:
 		print("No circles found. Check radius/threshold calibration.")
 		return [], []
 
-	questionCnts = np.round(circles[0, :]).astype("int")  # (x, y, r) per circle
+	questionCnts = np.round(circles[0, :]).astype("int")
 	imgQconts = image.copy()
 	for (x, y, r) in questionCnts:
 		cv2.circle(imgQconts, (x, y), r, (0, 255, 0), 1)
@@ -166,8 +164,6 @@ def get_Responses_Hough(image, bperRow, tag="", debug=False):
 
 		bubbled_idx, gap_ratio = score_row(counts)
 
-		# Hough is only ever the fallback -- still requires a real
-		# gap_ratio, unlike contour which trusts a count match alone.
 		if gap_ratio >= MIN_GAP_RATIO:
 			c = row[bubbled_idx]
 			cv2.circle(imgResult, (c[0], c[1]), c[2], (0, 255, 0), 2)
@@ -228,5 +224,5 @@ def get_Responses(image, bperRow, tag="", debug=False):
 
 
 if __name__ == "__main__":
-	test_img = cv2.imread("input/image11.jpg")
+	test_img = cv2.imread("input/image15.jpeg")
 	print("merged:", get_Responses(test_img, 5, "test", debug=True)[0])

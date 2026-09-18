@@ -6,6 +6,10 @@ from openpyxl.styles import PatternFill
 from dewarp import dewarp_image_A4
 import getResponses
 import streamlit as st
+import streamlit.logger
+import os
+streamlit.logger.set_log_level("ERROR")
+os.makedirs("output", exist_ok=True)
 
 ################################ HELPERS #############################
 
@@ -50,7 +54,15 @@ def validate_images(image_files, template, debug=False):
     qr_ids = {}
 
     for img_file in image_files:
-        dewarped = dewarp_image_A4(img_file)
+        file_bytes = np.frombuffer(img_file.read(), dtype=np.uint8)
+        original = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        img_file.seek(0)  # reset -- dewarp_image_A4 reads this same stream again below
+
+        if original.shape[1] < 1500:
+            flagged_images.append(f"{img_file.name} (low quality)")
+            continue
+
+        dewarped = dewarp_image_A4(img_file, debug=debug)
         if dewarped is None:
             flagged_images.append(f"{img_file.name} (dewarp failed)")
             continue
@@ -61,8 +73,8 @@ def validate_images(image_files, template, debug=False):
             flagged_images.append(f"{img_file.name} (QR not detected)")
             continue
 
-        dewarped_images[img_file.name] = dewarped
-        qr_ids[img_file.name] = qr_id
+        dewarped_images[os.path.basename(img_file.name)] = dewarped
+        qr_ids[os.path.basename(img_file.name)] = qr_id
 
     if flagged_images:
         msg = f"Please re-upload after improving the quality of: {flagged_images}"
@@ -153,7 +165,7 @@ def process_images(image_files, template_file, debug=False):
     return extract_results(template, dewarped_images, qr_ids, debug=debug)
 
 if __name__ == "__main__":
-    image_files = [open(f"input/{name}", "rb") for name in ["image12.jpg", "image13.jpg", "image14.jpg"]]
+    image_files = [open(f"input/{name}", "rb") for name in ["image14.jpg"]]
     template_file = open("input/page2_template.json", "rb")
 
     all_results = process_images(image_files, template_file, debug=True)
