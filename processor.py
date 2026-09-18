@@ -1,24 +1,13 @@
 import cv2, json, copy
-import pymupdf 
 import numpy as np
 import openpyxl
 from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
+from dewarp import dewarp_image_A4
 import getResponses
 import streamlit as st
 
-### Fetch selected pages of a pdf document as images
-def fetch_images (document, selected_pages, page_dpi):
-    images = {}
-
-    for i, page in enumerate(document):
-        if i not in selected_pages:
-            continue
-        pix = page.get_pixmap(dpi=page_dpi)
-        arr = np.frombuffer(pix.samples, dtype="uint8").reshape(pix.height, pix.width, pix.n)
-        images[f"page{i+1}"] = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-
-    return images
+################################ HELPERS #############################
 
 ### Crop images by box dimensions
 def img_cropper (image, box):
@@ -38,44 +27,60 @@ def get_QR (croppedboxImage):
 
     return qrID
 
-### Process the pages and get results (responses and scored images)
-def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json_path=None, save_to_disk=False, debug=False):
-    # input template and checks whether there is a QR box and some response boxes
-    template = json.load(template_file)
 
+################################ MAIN PIPELINE #############################
+
+### Validate if the template has QR boxes and response boxes
+def validate_template(template, debug=False):
     if not any(box["box_type"] == "QR_Box" for box in template):
-        print("No QR box in template")
-        st.error("No QR box found in template. Please check your template.")
-        return []
+        msg = "No QR box found in template. Please re-upload a valid template."
+        print(msg) if debug else st.error(msg)
+        return False
     if not any(box["box_type"] == "Response_Box" for box in template):
-        print("No Response box in template")
-        st.error("No Response box found in template. Please check your template.")
-        return []
+        msg = "No Response box found in template. Please re-upload a valid template."
+        print(msg) if debug else st.error(msg)
+        return False
+    return True
 
-    # convert pdf into images
-    doc = pymupdf.open(stream=pdf_file.read(), filetype="pdf")
-    images = fetch_images(doc, selected_pages, page_dpi)
+### Validate the images for successful dewarp, and reads QRs
+def validate_images(image_files, template, debug=False):
+    qr_box = next(box for box in template if box["box_type"] == "QR_Box")
+    flagged_images = []
+    dewarped_images = {}
+    qr_ids = {}
 
+    for img_file in image_files:
+        dewarped = dewarp_image_A4(img_file)
+        if dewarped is None:
+            flagged_images.append(f"{img_file.name} (dewarp failed)")
+            continue
+
+        cropped_qr = img_cropper(dewarped, qr_box)
+        qr_id = get_QR(cropped_qr)
+        if qr_id == "":
+            flagged_images.append(f"{img_file.name} (QR not detected)")
+            continue
+
+        dewarped_images[img_file.name] = dewarped
+        qr_ids[img_file.name] = qr_id
+
+    if flagged_images:
+        msg = f"Please re-upload after improving the quality of: {flagged_images}"
+        print(msg) if debug else st.error(msg)
+
+    return flagged_images, dewarped_images, qr_ids
+
+### Process the pages and get results (responses and scored images)
+def extract_results(template, dewarped_images, qr_ids, debug=False):
     all_results = []
     st.session_state.all_results_images = {}
     st.session_state.all_cropped_boxes = {}
 
     # cycle through page images and get answers
-    for key, img in images.items():
+    for key, img in dewarped_images.items():
         boxes = copy.deepcopy(template)
-        page_qr_id = ""
-        print(f"Investigating {key}")
-
-        for box in boxes:
-            if box["box_type"] == "QR_Box":
-                croppedQRimg = img_cropper(img, box)
-                page_qr_id = get_QR(croppedQRimg)
-                if page_qr_id != "":
-                    print(f"QR Box found in {key} and identified as {page_qr_id}")
-
-        if page_qr_id == "":
-            print(f"Skipping {key}: QR not identified")
-            continue
+        page_qr_id = qr_ids[key]
+        print(f"Investigating {key}, QR: {page_qr_id}")
 
         for i, box in enumerate(boxes):
             if box["box_type"] == "Response_Box":
@@ -99,8 +104,6 @@ def process_pages(template_file, pdf_file, selected_pages, page_dpi, output_json
 
         all_results.append({"page": key, "qr_ID": page_qr_id, "boxes": boxes})
 
-    if save_to_disk:
-        json.dump(all_results, open(output_json_path, "w"), indent=2)
     return all_results
 
 ### Build excel sheet based on results
@@ -136,13 +139,24 @@ def build_excel(all_results, output_path):
 
     wb.save(output_path)
 
+### Top level function: First validates, and then extracts results
+def process_images(image_files, template_file, debug=False):
+    template = json.load(template_file)
+
+    if not validate_template(template, debug=debug):
+        return None
+
+    flagged_images, dewarped_images, qr_ids = validate_images(image_files, template, debug=debug)
+    if flagged_images:
+        return None
+
+    return extract_results(template, dewarped_images, qr_ids, debug=debug)
+
 if __name__ == "__main__":
-    all_results = process_pages(
-        template_file=open("input/page1_template.json", "rb"),
-        pdf_file=open("input/merged_input.pdf", "rb"),
-        selected_pages=[0],
-        page_dpi=280,
-        output_json_path="output/all_pages_results.json",
-        save_to_disk=True,
-    )
-    build_excel(all_results, "output/responses.xlsx")   
+    image_files = [open(f"input/{name}", "rb") for name in ["image12.jpg", "image13.jpg", "image14.jpg"]]
+    template_file = open("input/page2_template.json", "rb")
+
+    all_results = process_images(image_files, template_file, debug=True)
+    if all_results:
+        build_excel(all_results, "output/responses.xlsx")
+        json.dump(all_results, open("output/all_pages_results.json", "w"), indent=2)

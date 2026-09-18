@@ -1,11 +1,9 @@
 import io
 import json
 import zipfile
-import pymupdf
-
 import cv2
 import streamlit as st
-from processPDF import process_pages, build_excel
+from processor import process_images, build_excel
 
 st.set_page_config(layout="wide")
 
@@ -25,57 +23,22 @@ st.title("Review")
 if "step" not in st.session_state:
     st.session_state.step = "upload"
 
-# -------------------- Helpers --------------------
-
-def get_selected_pages(mode, num_pages, pages_str=""):
-    if mode == "All pages":
-        return list(range(num_pages))
-    if mode == "Odd pages":
-        return list(range(0, num_pages, 2))
-    if mode == "Even pages":
-        return list(range(1, num_pages, 2))
-    selected = []
-    if pages_str:
-        for part in pages_str.split(","):
-            part = part.strip()
-            if "-" in part:
-                start, end = part.split("-")
-                selected += list(range(int(start) - 1, int(end)))
-            else:
-                selected.append(int(part) - 1)
-    return selected
-
 # -------------------- 1. upload --------------------
 
 if st.session_state.step == "upload":
     st.subheader("Upload scanned responses and box template file")
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        pdf_file = st.file_uploader("Response PDF", type="pdf")
+        image_files = st.file_uploader("Scanned response images", type=["jpg", "png"], accept_multiple_files=True)
     with col2:
         template_file = st.file_uploader("Template JSON", type="json")
 
-    st.subheader("Select pages and page quality (DPI)")
-    col3, col4 = st.columns(2)
-    with col3:
-        dpi = st.number_input("Page DPI", value=280, step=10)
-    with col4:
-        num_pages = 0
-        if pdf_file:
-            num_pages = pymupdf.open(stream=pdf_file.read(), filetype="pdf").page_count
-            pdf_file.seek(0)
-        
-        mode = st.selectbox("Select pages to process", ["All pages", "Odd pages", "Even pages", "Custom"])
-        pages_str = st.text_input("Pages (e.g. 1,3,5-8)") if mode == "Custom" else ""
-        selected_pages = get_selected_pages(mode, num_pages, pages_str)
-
-    if st.button("Process", disabled=not (pdf_file and template_file)):
+    if st.button("Process", disabled=not (image_files and template_file)):
         with st.spinner("Processing..."):
-            st.session_state.all_results = process_pages(
+            st.session_state.all_results = process_images(
+                image_files=image_files,
                 template_file=template_file,
-                pdf_file=pdf_file,
-                selected_pages=selected_pages,
-                page_dpi=dpi,
+                debug=False,
             )
         if st.session_state.all_results:
             st.session_state.review_idx = 0

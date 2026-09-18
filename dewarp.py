@@ -17,7 +17,7 @@ def draw_markers(image, corners, rejected):
     return annotated
 
 ### Warps image flat into A4 ratio using 4 marker centers as corners
-def dewarp_image_A4(image, target_w=800, target_h=None, margin=35, debug=False):
+def dewarp_image_A4(image, target_w=2000, target_h=None, margin=80, debug=False):
     # Pre process the image input
     file_bytes = np.frombuffer(image.read(), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
