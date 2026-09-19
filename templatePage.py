@@ -38,7 +38,7 @@ elif st.session_state.step == "label":
 
     # Create a canvas component
     canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.1)",  # Fixed fill color with some opacity
+        fill_color="rgba(255, 165, 0, 0.1)",  
         stroke_width=2,
         stroke_color="#0B8132",
         background_image=img,
@@ -64,9 +64,12 @@ elif st.session_state.step == "label":
     for i, box in enumerate(boxesTemplate):
         col1, col2, col3 = st.columns(3)
         with col1:
-            box["box_type"] = st.selectbox(f"What is box {i+1}?", ["Response_Box", "QR_Box"], key=f"type_{i}")
+            box["box_type"] = st.selectbox(f"What is box {i+1}?", ["Response_Box", "Text_Box", "QR_Box"], key=f"type_{i}")
         with col2:
-            box["labels"] = st.text_input(f"Label(s) for box {i+1}", key=f"label_{i}")
+            if box["box_type"] == "Response_Box" or box["box_type"] == "Text_Box":
+                box["labels"] = st.text_input(f"Label(s) for box {i+1}", key=f"label_{i}")
+            else:
+                box["labels"] = "QR_Box"
         with col3:
             if box["box_type"] == "Response_Box":
                 box["bperRow"] = st.number_input(f"Bubbles per row in Box {i+1}", min_value=1, step=1, key=f"bubbles_{i}")
