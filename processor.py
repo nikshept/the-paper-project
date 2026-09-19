@@ -175,8 +175,8 @@ def process_images(image_files, template_file, debug=False):
     return extract_results(template, dewarped_images, qr_ids, debug=debug)
 
 if __name__ == "__main__":
-    image_files = [open(f"input/{name}", "rb") for name in ["image14.jpg"]]
-    template_file = open("input/page2_template.json", "rb")
+    image_files = [open(f"input/{name}", "rb") for name in ["image17.jpg"]]
+    template_file = open("input/page3_template.json", "rb")
 
     all_results = process_images(image_files, template_file, debug=True)
     if all_results:

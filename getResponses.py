@@ -1,6 +1,19 @@
 import numpy as np
 import cv2
 
+def debug_row_colors(image, rows, source, tag):
+	"""Draws each row's shapes in a distinct color (cycling hue) --
+	lets you visually check whether contour_rows[i] and hough_rows[i]
+	actually correspond to the same physical row."""
+	annotated = image.copy()
+	for i, row in enumerate(rows):
+		hue = int((i * 180 / max(len(rows), 1)) % 180)
+		color = cv2.cvtColor(np.uint8([[[hue, 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0].tolist()
+		for shape in row:
+			draw_shape(annotated, shape, source, color, 2)
+	cv2.imwrite(f"output/3a_debug_rows_{source}_{tag}.jpg", annotated)
+
+
 def group_rows(shapes, get_y, y_gap=20):
 	"""Groups shapes into rows by y-position. shapes must already be
 	sorted top-to-bottom. get_y(shape) pulls the y-coordinate --
@@ -182,6 +195,11 @@ def get_Responses(image, bperRow, tag="", debug=False):
 	contour_answers, contour_rows = get_Responses_Contour(image, bperRow, tag, debug)
 	hough_answers, hough_rows = get_Responses_Hough(image, bperRow, tag, debug)
 
+	if debug:
+		print(f"Contour has {len(contour_rows)} rows and hough has {len(hough_rows)} rows.")
+		debug_row_colors(image, contour_rows, "contour", tag)
+		debug_row_colors(image, hough_rows, "hough", tag)
+
 	imgMerged = image.copy()
 	merged = []
 	n_rows = max(len(contour_answers), len(hough_answers))
@@ -224,5 +242,5 @@ def get_Responses(image, bperRow, tag="", debug=False):
 
 
 if __name__ == "__main__":
-	test_img = cv2.imread("input/image15.jpeg")
+	test_img = cv2.imread("input/image25.png")
 	print("merged:", get_Responses(test_img, 5, "test", debug=True)[0])
