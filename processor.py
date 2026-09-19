@@ -162,16 +162,17 @@ def build_excel(all_results, output_path):
         ws.cell(row=r, column=1, value=page["page"])
         ws.cell(row=r, column=2, value=page["qr_ID"])
         for box in page["boxes"]:
-            if box["box_type"] != "Response_Box":
+            if box["box_type"] == "QR_Box":
                 continue
             for label, ans in box.get("questionlabels", {}).items():
                 if not isinstance(ans, dict):
                     continue
                 col = 3 + all_labels.index(label)
                 cell = ws.cell(row=r, column=col, value=ans.get("value"))
-                cell.comment = Comment(f"confidence_ratio: {ans.get('confidence_ratio'):.0%}\nflagged: {ans.get('flagged')}\nsource: {ans.get('source')}", "cropper")
-                if ans.get("flagged"):
-                    cell.fill = RED_FILL
+                if "confidence_ratio" in ans:
+                    cell.comment = Comment(f"confidence_ratio: {ans.get('confidence_ratio'):.000%}\nflagged: {ans.get('flagged')}\nsource: {ans.get('source')}", "cropper")
+                    if ans.get("flagged"):
+                        cell.fill = RED_FILL
 
     wb.save(output_path)
 

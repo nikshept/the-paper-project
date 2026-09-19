@@ -54,7 +54,7 @@ elif st.session_state.step == "review":
     tags = list(st.session_state.all_results_images.keys())
     idx = st.session_state.review_idx
     tag = tags[idx]
-    st.write(f"There are {len(st.session_state.text_results_images)} text images in session state")
+    
     st.caption(f"Box {idx + 1} of {len(tags)}: {tag}")
     col5, col6 = st.columns([1,1.55],vertical_alignment="center")
     with col5:
@@ -77,12 +77,43 @@ elif st.session_state.step == "review":
     if col8.button("Next" if idx < len(tags) - 1 else "Finish"):
         if idx < len(tags) - 1:
             st.session_state.review_idx += 1
+        elif st.session_state.text_results_images:
+            st.session_state.text_idx = 0
+            st.session_state.step = "review_text"
         else:
             st.session_state.step = "download"
         st.rerun()
 
+# -------------------- 3. Review Text --------------------
 
-# -------------------- 3. download --------------------
+elif st.session_state.step == "review_text":
+    text_tags = list(st.session_state.text_results_images.keys())
+    tidx = st.session_state.text_idx
+    ttag = text_tags[tidx]
+
+    st.caption(f"Text box {tidx + 1} of {len(text_tags)}: {ttag}")
+    
+    st.image(st.session_state.text_results_images[ttag], channels="BGR")
+
+    box = next(b for p in st.session_state.all_results for b in p["boxes"] if b.get("tag") == ttag)
+    first_ans = box["questionlabels"][list(box["questionlabels"].keys())[0]]
+    current_text = first_ans.get("value", "") if isinstance(first_ans, dict) else ""
+    entered_text = st.text_area("Transcription", value=current_text, key=f"text_{ttag}", height=200)
+    for label in box["questionlabels"]:
+        box["questionlabels"][label] = {"value": entered_text}
+
+    col11, col12 = st.columns(2)
+    if col11.button("Back", disabled=tidx == 0):
+        st.session_state.text_idx -= 1
+        st.rerun()
+    if col12.button("Next" if tidx < len(text_tags) - 1 else "Finish"):
+        if tidx < len(text_tags) - 1:
+            st.session_state.text_idx += 1
+        else:
+            st.session_state.step = "download"
+        st.rerun()
+
+# -------------------- 4. download --------------------
 
 elif st.session_state.step == "download":
     all_results = st.session_state.all_results
