@@ -1,4 +1,4 @@
-import cv2, json, copy
+import cv2, json, copy, pymupdf, io
 import numpy as np
 import openpyxl
 from openpyxl.comments import Comment
@@ -12,6 +12,17 @@ streamlit.logger.set_log_level("ERROR")
 os.makedirs("output", exist_ok=True)
 
 ################################ HELPERS #############################
+
+### Renders pages of a pdf as a set of image files
+def pdf_to_image_files(pdf_file, dpi=280):
+    doc = pymupdf.open(stream=pdf_file.read(), filetype="pdf")
+    image_files = []
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(dpi=dpi)
+        fake_file = io.BytesIO(pix.tobytes("png"))
+        fake_file.name = f"page{i+1}.png"
+        image_files.append(fake_file)
+    return image_files
 
 ### Crop images by box dimensions
 def img_cropper (image, box):
@@ -30,7 +41,6 @@ def get_QR (croppedboxImage):
         qrID = res[0] if res else ""
 
     return qrID
-
 
 ################################ MAIN PIPELINE #############################
 

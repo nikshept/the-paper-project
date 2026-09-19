@@ -3,7 +3,7 @@ import json
 import zipfile
 import cv2
 import streamlit as st
-from processor import process_images, build_excel
+from processor import process_images, build_excel, pdf_to_image_files
 
 st.set_page_config(layout="wide")
 
@@ -30,13 +30,15 @@ if st.session_state.step == "upload":
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
         image_files = st.file_uploader("Scanned response images", type=["jpg", "png"], accept_multiple_files=True)
+        pdf_file = st.file_uploader("Or upload a PDF instead", type="pdf")
     with col2:
         template_file = st.file_uploader("Template JSON", type="json")
 
-    if st.button("Process", disabled=not (image_files and template_file)):
+    if st.button("Process", disabled=not ((image_files or pdf_file) and template_file)):
         with st.spinner("Processing..."):
+            files_to_process = pdf_to_image_files(pdf_file) if pdf_file else image_files
             st.session_state.all_results = process_images(
-                image_files=image_files,
+                image_files=files_to_process,
                 template_file=template_file,
                 debug=False,
             )
