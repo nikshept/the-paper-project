@@ -48,13 +48,13 @@ if st.session_state.step == "upload":
             st.rerun()
 
 
-# -------------------- 2. review --------------------
+# -------------------- 2. review response bubbles --------------------
 
 elif st.session_state.step == "review":
     tags = list(st.session_state.all_results_images.keys())
     idx = st.session_state.review_idx
     tag = tags[idx]
-
+    st.write(f"There are {len(st.session_state.text_results_images)} text images in session state")
     st.caption(f"Box {idx + 1} of {len(tags)}: {tag}")
     col5, col6 = st.columns([1,1.55],vertical_alignment="center")
     with col5:

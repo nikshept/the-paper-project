@@ -96,6 +96,7 @@ def validate_images(image_files, template, debug=False):
 def extract_results(template, dewarped_images, qr_ids, debug=False):
     all_results = []
     st.session_state.all_results_images = {}
+    st.session_state.text_results_images = {}
     st.session_state.all_cropped_boxes = {}
 
     # cycle through page images and get answers
@@ -107,11 +108,11 @@ def extract_results(template, dewarped_images, qr_ids, debug=False):
         for i, box in enumerate(boxes):
             if box["box_type"] == "Response_Box":
                 croppedResimg = img_cropper(img, box)
-                tag = f"{key}_{page_qr_id}_Box{i}"
+                tag = f"{key}_{page_qr_id}_Response_Box{i}"
                 box["tag"] = tag
                 st.session_state.all_cropped_boxes[tag] = croppedResimg
                 if debug:
-                    cv2.imwrite(f"output/00_cropped_box_{tag}.png", croppedResimg)
+                    cv2.imwrite(f"output/00_cropped_{tag}.png", croppedResimg)
 
                 results, imgResults = getResponses.get_Responses(croppedResimg, box["bperRow"], tag, debug)
 
@@ -124,7 +125,20 @@ def extract_results(template, dewarped_images, qr_ids, debug=False):
                 flagCount = sum(1 for (_, _, flag, _, _) in results if flag)
                 print(f"Box{i}: Received {valsCount} values and {flagCount} were flagged.")
 
+            elif box["box_type"] == "Text_Box":
+                croppedTextimg = img_cropper(img, box)
+                tag = f"{key}_{page_qr_id}_Text_Box{i}"
+                box["tag"] = tag
+                st.session_state.all_cropped_boxes[tag] = croppedTextimg
+                # call a function to process the text in the text image
+                st.session_state.text_results_images[tag] = croppedTextimg
+
+                if debug:
+                    cv2.imwrite(f"output/00_cropped_{tag}.png", croppedTextimg)            
+
         all_results.append({"page": key, "qr_ID": page_qr_id, "boxes": boxes})
+
+    
 
     return all_results
 
@@ -176,7 +190,7 @@ def process_images(image_files, template_file, debug=False):
 
 if __name__ == "__main__":
     image_files = [open(f"input/{name}", "rb") for name in ["image17.jpg"]]
-    template_file = open("input/page3_template.json", "rb")
+    template_file = open("input/page4_template.json", "rb")
 
     all_results = process_images(image_files, template_file, debug=True)
     if all_results:
