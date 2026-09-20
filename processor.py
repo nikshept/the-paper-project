@@ -1,8 +1,6 @@
 import cv2, json, copy, pymupdf, io
 import numpy as np
 import openpyxl
-from openpyxl.comments import Comment
-from openpyxl.styles import PatternFill
 from dewarp import dewarp_image_A4
 import getResponses
 import streamlit as st
@@ -117,7 +115,7 @@ def extract_results(template, dewarped_images, qr_ids, debug=False):
                 results, imgResults = getResponses.get_Responses(croppedResimg, box["bperRow"], tag, debug)
 
                 for label, (value, gap_ratio, flag, source, flagReason) in zip(box["questionlabels"].keys(), results):
-                    box["questionlabels"][label] = {"value": value, "confidence_ratio": gap_ratio, "flagged": flag, "source": source, "flagReason": flagReason}
+                    box["questionlabels"][label] = {"model_value": value, "confidence_ratio": gap_ratio, "flagged": flag, "source": source, "flagReason": flagReason}
 
                 st.session_state.all_results_images[tag] = imgResults
 
@@ -142,9 +140,8 @@ def extract_results(template, dewarped_images, qr_ids, debug=False):
 
     return all_results
 
-### Build excel sheet based on results
-def build_excel(all_results, output_path):
-    RED_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+### Build excel sheet of responses
+def build_responses_excel(all_results, output_path):
     wb = openpyxl.Workbook()
     ws = wb.active
 
@@ -168,11 +165,96 @@ def build_excel(all_results, output_path):
                 if not isinstance(ans, dict):
                     continue
                 col = 3 + all_labels.index(label)
-                cell = ws.cell(row=r, column=col, value=ans.get("value"))
-                if "confidence_ratio" in ans:
-                    cell.comment = Comment(f"confidence_ratio: {ans.get('confidence_ratio'):.000%}\nflagged: {ans.get('flagged')}\nsource: {ans.get('source')}", "cropper")
-                    if ans.get("flagged"):
-                        cell.fill = RED_FILL
+                ws.cell(row=r, column=col, value=ans.get("user_value"))
+
+    wb.save(output_path)
+
+### Build excel sheet for model evaluation
+def build_eval_excel(all_results, output_path):
+    wb = openpyxl.Workbook()
+
+    # ---- sheet 1: one row per question, raw data ----
+    ws = wb.active
+    ws.title = "Answers"
+    ws.append(["box_tag", "question_label", "model_value", "user_value", "source", "flagReason", "confidence_ratio"])
+
+    # correct/wrong counts per flagReason, built up as we scan every answer
+    tally = {}  # {flagReason: [correct_count, wrong_count]}
+
+    for page in all_results:
+        for box in page["boxes"]:
+
+            # skip QR boxes
+            if box["box_type"] == "QR_Box":
+                continue
+
+            for label, ans in box.get("questionlabels", {}).items():
+                # skip untouched template placeholders
+                if not isinstance(ans, dict):
+                    continue
+
+                model_value = ans.get("model_value")
+                user_value = ans.get("user_value")
+                flagReason = ans.get("flagReason")
+
+                ws.append([
+                    box.get("tag"),
+                    label,
+                    model_value,
+                    user_value,
+                    ans.get("source"),
+                    flagReason,
+                    ans.get("confidence_ratio"),
+                ])
+
+                # Text_Box has no model_value at the moment, skip their eval
+                if flagReason is None:
+                    continue
+
+                # Tally response bubbles' correct and wrongly predicted vals
+                tally.setdefault(flagReason, [0, 0])
+
+                if flagReason == "low confidence": # is correct if the real answer is either NA / MULT, if it was a num, its wrong
+                    is_correct = user_value in ("NA", "MULT")
+                elif flagReason == "high confidence" or flagReason == "medium confidence":
+                    is_correct = str(model_value) == str(user_value) # is correct if the prediction matches user's confirmation
+
+                if is_correct:
+                    tally[flagReason][0] += 1  # correct answers count +1
+                else:
+                    tally[flagReason][1] += 1  # wrong answers count +1
+
+    # ---- sheet 2: accuracy/coverage summary ----
+    stats = wb.create_sheet("Stats")
+    stats.append(["Confidence Level", "Correct", "Wrong", "Total", "Accuracy"])
+
+    committed = [0, 0]  # [correct, wrong] -- "high"/"medium" confidence = model committed to an answer
+    overall = [0, 0]    # same, but across every flagReason including "low confidence"
+
+    for reason in ["high confidence", "medium confidence", "low confidence"]:
+        if reason not in tally:
+            continue
+
+        # compute per reason accuracy = fraction of correct answers
+        correct, wrong = tally[reason]
+        total = correct + wrong
+        accuracy = correct / total if total else 0
+        stats.append([reason, correct, wrong, total, accuracy])
+
+        # compute overall accuracy and coverage = fraction of committed/predicted answers
+        overall[0] += correct
+        overall[1] += wrong
+        if reason != "low confidence":
+            committed[0] += correct
+            committed[1] += wrong
+
+    overall_total = sum(overall)
+    committed_total = sum(committed)
+
+    stats.append(["Overall", overall[0], overall[1], overall_total, overall[0] / overall_total if overall_total else 0])
+    stats.append([])
+    stats.append(["Coverage (high/medium confidence predictions)", "", "", "", committed_total / overall_total if overall_total else 0])
+    stats.append(["Selective accuracy (of high & medium conf predictions)", "", "", "", committed[0] / committed_total if committed_total else 0])
 
     wb.save(output_path)
 
@@ -195,5 +277,5 @@ if __name__ == "__main__":
 
     all_results = process_images(image_files, template_file, debug=True)
     if all_results:
-        build_excel(all_results, "output/responses.xlsx")
+        build_responses_excel(all_results, "output/responses.xlsx")
         json.dump(all_results, open("output/all_pages_results.json", "w"), indent=2)

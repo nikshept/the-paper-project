@@ -3,7 +3,7 @@ import json
 import zipfile
 import cv2
 import streamlit as st
-from processor import process_images, build_excel, pdf_to_image_files
+from processor import process_images, build_responses_excel, build_eval_excel, pdf_to_image_files
 
 st.set_page_config(layout="wide")
 
@@ -65,10 +65,9 @@ elif st.session_state.step == "review":
         options = [str(n) for n in range(1, box["bperRow"] + 1)] + ["NA", "MULT"]
 
         for label, ans in box["questionlabels"].items():
-            current = str(ans["value"]) if ans["value"] is not None else options[-2]
+            current = str(ans["model_value"]) if ans["model_value"] is not None else options[-2]
             choice = st.pills(label, options, default=current, label_visibility="collapsed", key=f"{tag}_{label}")
-            # any explicit choice counts as user-confirmed -- always green after this
-            box["questionlabels"][label] = {"value": choice, "confidence_ratio": 1.0, "flagged": False, "source": "user"}
+            ans["user_value"] = choice
 
     col7, col8 = st.columns(2)
     if col7.button("Back", disabled=idx == 0):
@@ -96,11 +95,16 @@ elif st.session_state.step == "review_text":
     st.image(st.session_state.text_results_images[ttag], channels="BGR")
 
     box = next(b for p in st.session_state.all_results for b in p["boxes"] if b.get("tag") == ttag)
-    first_ans = box["questionlabels"][list(box["questionlabels"].keys())[0]]
-    current_text = first_ans.get("value", "") if isinstance(first_ans, dict) else ""
+    label = list(box["questionlabels"].keys())[0]  # Text_Box always has exactly one label
+    ans = box["questionlabels"][label]
+
+    current_text = ans.get("user_value", "") if isinstance(ans, dict) else ""
     entered_text = st.text_area("Transcription", value=current_text, key=f"text_{ttag}", height=200)
-    for label in box["questionlabels"]:
-        box["questionlabels"][label] = {"value": entered_text}
+
+    if not isinstance(ans, dict):
+        ans = {"model_value": None}
+    ans["user_value"] = entered_text
+    box["questionlabels"][label] = ans
 
     col11, col12 = st.columns(2)
     if col11.button("Back", disabled=tidx == 0):
@@ -117,15 +121,19 @@ elif st.session_state.step == "review_text":
 
 elif st.session_state.step == "download":
     all_results = st.session_state.all_results
-    excel_buf = io.BytesIO()
-    build_excel(all_results, excel_buf)
+
+    resp_buf = io.BytesIO()
+    build_responses_excel(all_results, resp_buf)
     
+    eval_buf = io.BytesIO()
+    build_eval_excel(all_results, eval_buf)
 
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w") as zf:
         zf.writestr("results.json", json.dumps(all_results, indent=2))
 
-        zf.writestr("responses.xlsx", excel_buf.getvalue())
+        zf.writestr("responses.xlsx", resp_buf.getvalue())
+        zf.writestr("model_evaluation.xlsx", eval_buf.getvalue())
 
         for tag, img in st.session_state.all_cropped_boxes.items():
             _, buf = cv2.imencode(".png", img)
