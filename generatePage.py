@@ -1,7 +1,6 @@
 """Generate page -- upload a base PDF, configure marker/QR placement,
 preview live, then generate a sample or a batch from a codes.csv.
 Core stamping logic lives in core/overlay.py; this file is UI only."""
-import csv
 import io
 import zipfile
 
@@ -12,39 +11,26 @@ from overlay import compose_page, preview_page_png, OverlayConfig
 
 st.set_page_config(layout="wide")
 
-def read_codes(codes_file):
-    """Parses codes.csv, returns a validated list of codes, or None
-    (with the error already shown) if the file's no good."""
-    text = codes_file.getvalue().decode("utf-8")
-    reader = csv.DictReader(io.StringIO(text))
-    if "tracking_code" not in (reader.fieldnames or []):
-        st.error(f"codes.csv must have a 'tracking_code' column, found: {reader.fieldnames}")
-        return None
-    codes = [row["tracking_code"].strip() for row in reader if row["tracking_code"].strip()]
-    if not codes:
-        st.error("No codes found in codes.csv.")
-        return None
-    dupes = {c for c in codes if codes.count(c) > 1}
-    if dupes:
-        st.error(f"Duplicate tracking codes found, aborting: {dupes}")
-        return None
-    return codes
-
+def build_codes(date, batch_name, count):
+    """Generates count tracking codes as DDMMYYYY-{batch_name}-{i},
+    i zero-padded to match the width of the largest number (e.g.
+    001, 002, ... for count=100)."""
+    date_str = date.strftime("%Y%m%d")
+    width = len(str(count))
+    return [f"{date_str}-{batch_name}-{str(i).zfill(width)}" for i in range(1, count + 1)]
 
 def generate_batch(src_doc, num_pages, cfg, codes):
-    """One stamped PDF per code, zipped in memory."""
-    zip_buf = io.BytesIO()
+    """One combined PDF, every code's pages appended in sequence."""
+    out_doc = pymupdf.open()
     progress = st.progress(0.0)
-    with zipfile.ZipFile(zip_buf, "w") as zf:
-        for i, code in enumerate(codes):
-            out_doc = pymupdf.open()
-            for p in range(num_pages):
-                compose_page(src_doc, p, cfg, code, out_doc=out_doc)
-            zf.writestr(f"{code}.pdf", out_doc.tobytes())
-            out_doc.close()
-            progress.progress((i + 1) / len(codes))
+    for i, code in enumerate(codes):
+        for p in range(num_pages):
+            compose_page(src_doc, p, cfg, code, out_doc=out_doc)
+        progress.progress((i + 1) / len(codes))
     progress.empty()
-    return zip_buf.getvalue()
+    pdf_bytes = out_doc.tobytes()
+    out_doc.close()
+    return pdf_bytes
 
 
 st.header("Generate Survey")
@@ -60,19 +46,24 @@ num_pages = len(src_doc)
 col_preview, col_controls = st.columns(2, gap="medium")
 
 with col_controls:
-    content_scale = st.number_input("Content scale (%)", 0, 100, 90) / 100.0
+    d1, d2 = st.columns(2)
+    survey_date = d1.date_input("Survey date")
+    batch_name = d2.text_input("Batch name (e.g. school name)")
+    sheet_count = st.number_input("Number of survey sheets", min_value=1, step=1)
 
-    c1, c2 = st.columns(2)
-    left_x = c1.slider("Marker left", 0, 100, 40)
-    right_x = c2.slider("Marker right", 0, 100, 40)
-    top_y = c1.slider("Marker top", 0, 100, 40)
-    bottom_y = c2.slider("Marker bottom", 0, 100, 45)
-    marker_size = c1.slider("Marker size", 20, 80, 30)
-    qr_size = c2.slider("QR size", 20, 80, 35)
+    with st.expander("Advanced controls"): # advanced controls expand if user wants to change them
+        content_scale = st.number_input("Content scale (%)", 0, 100, 90) / 100.0
 
-    qr_position = st.radio("QR position", ["top", "bottom"], index=1, horizontal=True)
-    sample_code = st.text_input("Sample code (for preview / single download)", "667908")
-    codes_file = st.file_uploader("codes.csv (for batch)", type=["csv"])
+        c1, c2 = st.columns(2)
+        left_x = c1.slider("Marker left", 0, 100, 40)
+        right_x = c2.slider("Marker right", 0, 100, 40)
+        top_y = c1.slider("Marker top", 0, 100, 40)
+        bottom_y = c2.slider("Marker bottom", 0, 100, 50)
+        marker_size = c1.slider("Marker size", 20, 80, 30)
+        qr_size = c2.slider("QR size", 20, 80, 40)
+
+        qr_position = c1.radio("QR position", ["top", "bottom"], index=1, horizontal=True)
+        sample_code = c2.text_input("Sample code (for sample download)", "20260915-JIRS-03")
 
     cfg = OverlayConfig(
         content_scale=content_scale,
@@ -89,13 +80,12 @@ with col_controls:
                             file_name=f"{sample_code}.pdf", mime="application/pdf")
         out_doc.close()
 
-    if gen_batch.button("Generate batch", width="stretch", disabled=codes_file is None):
-        codes = read_codes(codes_file)
-        if codes is not None:
-            zip_bytes = generate_batch(src_doc, num_pages, cfg, codes)
-            st.success(f"Generated {len(codes)} PDFs.")
-            st.download_button("Download all as .zip", zip_bytes,
-                                file_name="generated_surveys.zip", mime="application/zip")
+    if gen_batch.button("Generate batch", width="stretch", disabled=not batch_name):
+        codes = build_codes(survey_date, batch_name, sheet_count)
+        pdf_bytes = generate_batch(src_doc, num_pages, cfg, codes)
+        st.success(f"Generated {len(codes)} pages.")
+        st.download_button("Download batch PDF", pdf_bytes,
+                            file_name=f"{batch_name}.pdf", mime="application/pdf")
 
 with col_preview:
     if "preview_page" not in st.session_state:
