@@ -48,8 +48,8 @@ def validate_template(template, debug=False):
         msg = "No QR box found in template. Please re-upload a valid template."
         print(msg) if debug else st.error(msg)
         return False
-    if not any(box["box_type"] == "Response_Box" for box in template):
-        msg = "No Response box found in template. Please re-upload a valid template."
+    if not any(box["box_type"] in ("Response_Box", "Text_Box") for box in template):
+        msg = "No Response or Text box found in template. Please re-upload a valid template."
         print(msg) if debug else st.error(msg)
         return False
     return True

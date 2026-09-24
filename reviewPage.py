@@ -43,8 +43,14 @@ if st.session_state.step == "upload":
                 debug=False,
             )
         if st.session_state.all_results:
-            st.session_state.review_idx = 0
-            st.session_state.step = "review"
+            if st.session_state.all_results_images:
+                st.session_state.review_idx = 0
+                st.session_state.step = "review"
+            elif st.session_state.text_results_images:
+                st.session_state.text_idx = 0
+                st.session_state.step = "review_text"
+            else:
+                st.session_state.step = "download"
             st.rerun()
 
 
