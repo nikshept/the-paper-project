@@ -4,7 +4,7 @@ Core stamping logic lives in core/overlay.py; this file is UI only."""
 import io
 import zipfile
 
-import pymupdf
+import pymupdf, glob, os
 import streamlit as st
 
 from overlay import compose_page, preview_page_png, OverlayConfig
@@ -32,15 +32,35 @@ def generate_batch(src_doc, num_pages, cfg, codes):
     out_doc.close()
     return pdf_bytes
 
+def short_name(path):
+    # shows the filename up to and including "Survey"
+    name = os.path.basename(path)
+    end = name.lower().find("survey")
+    return name[:end + len("survey")] if end != -1 else os.path.splitext(name)[0]
+
+SURVEY_DIR = "assets/surveys"  # folder in the repo holding the predefined PDFs
 
 st.header("Generate Survey")
 
-uploaded = st.file_uploader("Upload .pdf", type=["pdf"])
-if uploaded is None:
-    st.info("Upload a PDF to get started.")
-    st.stop()
+source = st.radio("Survey sheet", ["Upload my own", "Use a predefined sheet"], horizontal=True)
 
-src_doc = pymupdf.open(stream=uploaded.getvalue(), filetype="pdf")
+if source == "Upload my own":
+    uploaded = st.file_uploader("Upload a survey sheet (.pdf)", type=["pdf"])
+    if uploaded is None:
+        st.stop()
+    pdf_bytes = uploaded.getvalue()
+else:
+    sheets = sorted(glob.glob(f"{SURVEY_DIR}/*.pdf"))
+    if not sheets:
+        st.warning(f"No PDFs found in '{SURVEY_DIR}/'.")
+        st.stop()
+    choice = st.segmented_control("Select a survey sheet", sheets, format_func=short_name)
+    if choice is None:
+        st.stop()
+    with open(choice, "rb") as f:
+        pdf_bytes = f.read()
+
+src_doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
 num_pages = len(src_doc)
 
 col_preview, col_controls = st.columns(2, gap="medium")
