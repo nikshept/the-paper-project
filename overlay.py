@@ -177,7 +177,7 @@ def compose_page(src_doc: pymupdf.Document, page_num: int, cfg: OverlayConfig,
     else:
         _draw_corner_brackets(new_page, cfg)
 
-    qr_data = f"{tracking_code}-P{page_num}"
+    qr_data = f"{tracking_code}-P{page_num + 1}"
     qr_bytes = _make_qr_png_bytes(qr_data)
     qr_x, qr_y = resolve_qr_position(cfg, page_w, page_h)
     qr_rect = pymupdf.Rect(qr_x, qr_y, qr_x + cfg.qr_size, qr_y + cfg.qr_size)
@@ -188,7 +188,7 @@ def compose_page(src_doc: pymupdf.Document, page_num: int, cfg: OverlayConfig,
             qr_rect.x1 + cfg.qr_text_gap,
             qr_rect.y0 + qr_rect.height / 2 + cfg.qr_text_size / 3,
         )
-        new_page.insert_text(text_point, str(tracking_code), fontsize=cfg.qr_text_size)
+        new_page.insert_text(text_point, qr_data, fontsize=cfg.qr_text_size)
 
     return out_doc
 
