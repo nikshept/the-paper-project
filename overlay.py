@@ -57,8 +57,8 @@ class OverlayConfig:
                                    # resolve_qr_position() for why x/y aren't free
     qr_size: float = 32           # pt
     show_tracking_code_text: bool = True
-    qr_text_gap: float = 6        # pt, gap between QR and its adjacent text
-    qr_text_size: float = 8       # pt
+    qr_text_gap: float = 10        # pt, gap between QR and its adjacent text
+    qr_text_size: float = 12       # pt
 
 
 def resolve_qr_position(cfg: OverlayConfig, page_width: float, page_height: float) -> tuple:

@@ -1,18 +1,18 @@
 """Generate page -- upload a base PDF, configure marker/QR placement,
 preview live, then generate a sample or a batch from a codes.csv.
 Core stamping logic lives in core/overlay.py; this file is UI only."""
-import pymupdf, glob, os, openpyxl
+import pymupdf, glob, os
 import streamlit as st
 
 from overlay import compose_page, preview_page_png, OverlayConfig
+from contacts import read_table
 
 st.set_page_config(layout="wide")
 
 # reads QR codes from the first column of the first sheet, skipping the header row
-def read_codes_excel(file):
-    ws = openpyxl.load_workbook(file, read_only=True).active
-    rows = ws.iter_rows(min_row=2, max_col=1, values_only=True)
-    return [str(r[0]).strip() for r in rows if r[0] is not None and str(r[0]).strip()]
+def read_codes(file):
+    first_column = read_table(file).iloc[:, 0]
+    return [str(code).strip() for code in first_column]
 
 # one code per sheet: DDMMYYYY-BATCH-TREK-i, with full names (overlay.py adds the page number)
 def build_codes(date, batch_name, trek_name, count):
@@ -67,7 +67,7 @@ num_pages = len(src_doc)
 col_preview, col_controls = st.columns(2, gap="medium")
 
 with col_controls:
-    code_source = st.radio("QR codes", ["Generate from batch info", "Upload Excel"], horizontal=True)
+    code_source = st.radio("QR codes", ["Generate from batch info", "Upload file"], horizontal=True)
 
     if code_source == "Generate from batch info":
         d1, d2 = st.columns(2)
@@ -80,11 +80,11 @@ with col_controls:
         ready = bool(batch_name and trek_name)
         batch_file = f"{batch_name}.pdf"
     else:
-        codes_file = st.file_uploader("Excel of QR codes (first column, header in row 1)", type=["xlsx"])
-        codes = read_codes_excel(codes_file) if codes_file else []
+        codes_file = st.file_uploader("File of QR codes (csv or excel, first column, header in row 1)", type=["csv", "xlsx"])
+        codes = read_codes(codes_file) if codes_file else []
         duplicates = len(codes) != len(set(codes))
         if duplicates:
-            st.error("Duplicate QR codes found in the Excel file.")
+            st.error("Duplicate QR codes found in the file.")
         ready = bool(codes) and not duplicates
         batch_file = "survey_batch.pdf"
 
@@ -92,13 +92,13 @@ with col_controls:
     
 
     with st.expander("Advanced controls"): # advanced controls expand if user wants to change them
-        content_scale = st.number_input("Content scale (%)", 0, 120, 100) / 100.0
+        content_scale = st.number_input("Content scale (%)", 0, 120, 95) / 100.0
 
         c1, c2 = st.columns(2)
         left_x = c1.slider("Marker left", 0, 100, 30)
         right_x = c2.slider("Marker right", 0, 100, 30)
         top_y = c1.slider("Marker top", 0, 100, 30)
-        bottom_y = c2.slider("Marker bottom", 0, 100, 35)
+        bottom_y = c2.slider("Marker bottom", 0, 100, 30)
         marker_size = c1.slider("Marker size", 20, 80, 30)
         qr_size = c2.slider("QR size", 20, 80, 40)
 
